@@ -524,6 +524,7 @@ export function WorkbarSurface(props: {
             <Suspense fallback={<WorkbarPanelLoading label={copy.files} />}>
               <ArtifactPane
                 sessionId={props.sessionId}
+                refreshEnabled={!props.hidden && panelVisible}
                 onCountChange={setArtifactCount}
                 onDismiss={() => props.onDismissPanel(placement)}
               />
