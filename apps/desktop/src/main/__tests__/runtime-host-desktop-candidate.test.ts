@@ -567,12 +567,60 @@ test('closes the claimed Host connection when native capability construction fai
           releaseComputerUseSession() {},
         }),
       ),
-    // The desktop-local schema check moved into the shared protocol decoder,
-    // which rejects a non-object tool schema root with its own wording.
     /tool schema root must be an object/,
   );
 
   assert.equal(ipc.size, 0);
+  assert.equal(host.closeCalls, 1);
+});
+
+test('isolates an invalid dynamic MCP tool without dropping the Host connection', async () => {
+  // Per-tool isolation: one bad tool is skipped and the provider still
+  // constructs, so the Host connection stays alive.
+  const ipc = ipcHarness();
+  const host = connectionHarness('invalid-capability');
+  const invalidTool = {
+    ...nativeTool(),
+    parameters: z.string(),
+  } as unknown as MakaTool;
+  const healthyTool = {
+    ...nativeTool(),
+    name: 'healthy_mcp',
+    impl: async () => 'healthy',
+  };
+
+  const candidate = await createDesktopRuntimeHostCandidate(
+    host.connection,
+    deps(ipc, {
+      browserTools: [],
+      resolveBrowserUrl: () => 'https://example.com/',
+      releaseBrowserSession() {},
+      computerUseTools: emptyComputerUseTools(),
+      releaseComputerUseSession() {},
+      additionalGroups: () => [
+        {
+          offerId: 'desktop_mcp',
+          label: 'MCP',
+          description: 'MCP tools',
+          tools: [invalidTool, healthyTool],
+        },
+      ],
+    }),
+  );
+
+  assert.equal(host.capabilityRegistrations, 1);
+  assert.equal(host.closeCalls, 0);
+  assert.deepEqual(
+    await host.invokeCapability({
+      ...capabilityFrame('session-invalid-capability'),
+      offerId: 'desktop_mcp',
+      serverId: 'desktop_mcp',
+      toolName: 'healthy_mcp',
+    }),
+    { content: [{ type: 'text', text: 'healthy' }] },
+  );
+
+  await candidate.close();
   assert.equal(host.closeCalls, 1);
 });
 
