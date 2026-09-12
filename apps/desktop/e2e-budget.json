@@ -9,10 +9,6 @@
       "tests": 1,
       "electron": "the folder reference has to survive a renderer reload and still agree with the Host's session record"
     },
-    "context-window-save.spec.ts": {
-      "tests": 1,
-      "electron": "the saved window is read back from the Host's connection snapshot, not from renderer state"
-    },
     "new-task-reload.spec.ts": {
       "tests": 2,
       "electron": "renderer reload must preserve an explicit new task and rebuild archived-only Host history as an empty, usable new-task surface"
