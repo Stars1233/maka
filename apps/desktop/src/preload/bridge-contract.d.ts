@@ -1365,6 +1365,8 @@ export interface MakaBridge {
     restore(projectId: string, host?: DesktopRuntimeHostRef): Promise<ProjectRecord>;
   };
   shellRuns: {
+    recover(sessionId: string): Promise<import('../shared/runtime-host-identity.js').TerminalRecovery>;
+    subscribeCloseChanges(handler: (change: import('../shared/runtime-host-identity.js').TerminalCloseChange) => void): () => void;
     list(sessionId: string): Promise<ShellRunUpdate[]>;
     attach(input: {
       sessionId: string;
@@ -1377,11 +1379,11 @@ export interface MakaBridge {
       ref: string;
       input?: string;
       size?: { cols: number; rows: number };
-    }): Promise<ShellRunUpdate | null>;
+    }): Promise<void>;
     stop(input: {
       sessionId: string;
       ref: string;
-    }): Promise<ShellRunUpdate | null>;
+    }): Promise<void>;
     subscribeUpdates(handler: (update: ShellRunUpdate) => void): () => void;
     subscribePtyData(handler: (event: ShellRunPtyDataEvent) => void): () => void;
     subscribeResync(handler: (event: { sessionId: string }) => void): () => void;

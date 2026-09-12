@@ -313,13 +313,18 @@ function AppShellContent({
     seedSessions,
     activeId,
     activeIdRef,
+    requestedSessionId,
     bootstrapSelectionLease,
     setActiveId,
     startNewSession,
     clearOwnedSessionState,
+    captureSelection,
+    isSessionSelected,
+    retiredSessionIds,
     messages,
     transientMessages,
     setMessages,
+    commitTranscript,
     addTransientMessage,
     updateTransientMessage,
     retireCancelledTransientMessages,
@@ -331,14 +336,14 @@ function AppShellContent({
     messageLoadPending,
     setMessageLoadPending,
     sessionUiController,
+    activeCatalogSession,
+    activeHostSession,
+    requestedCatalogSession,
+    requestedHostSession,
+    sharedSessionActive,
+    ownerActiveId,
+    switchingSession,
   } = useAppShellSessionWorkspace(toastApi);
-  // A locally created task can become active before its catalog row arrives,
-  // and remains pending until Host creation finishes. Neither state admits
-  // Host reads; cached rows already have a Host identity and may reconnect.
-  const activeCatalogSession = sessions.find((session) => session.id === activeId);
-  const activeHostSession = activeCatalogSession?.localState !== 'pending' ? activeCatalogSession : undefined;
-  const sharedSessionActive = activeCatalogSession?.shared === true;
-  const ownerActiveId = sharedSessionActive ? undefined : activeHostSession?.id;
   // Only the outstanding read needs a fence; past Sessions leave no hydration metadata.
   const interactionHydrationRef = useRef<{ sessionId: string } | null>(null);
   const markInteractionChanged = useCallback((sessionId: string) => {
@@ -1354,7 +1359,6 @@ function AppShellContent({
     () => setNavSelection({ section: 'sessions' }),
     [setNavSelection],
   );
-  const clearActiveMessages = useCallback(() => setMessages([]), [setMessages]);
   const openSession = useMemo(
     () =>
       createSessionOpenCommand({
@@ -1374,11 +1378,9 @@ function AppShellContent({
   // their identity carries no information and this object never has to be
   // held still by hand (#4109).
   const sessionNavigationPorts: SessionNavigationPorts = {
-    activeIdRef,
     sessionsRef,
     pendingSessionRowActionsRef,
     activateSession: setActiveId,
-    clearActiveMessages,
     clearSessionRendererState,
     refreshSessions,
     toastApi,
@@ -1465,7 +1467,7 @@ function AppShellContent({
     messageRetryPending: sessionUiController.messageRetryPending,
     refreshSessions,
     activateSessionForFirstSend,
-    setActiveId,
+    retireSession: clearSessionRendererState,
     setMessageLoadErrorBySession: sessionUiController.setMessageLoadErrorBySession,
     addTransientMessage,
     updateTransientMessage,
@@ -1491,22 +1493,20 @@ function AppShellContent({
   const { handleTurnFooterAction } = useStableActions(createAppShellTurnActions, {
     uiLocale,
     activeIdRef,
+    captureSelection,
     turnActionRegistry,
     openSessionInChat,
-    refreshMessages,
     refreshSessions,
-    setMessages,
     toastApi,
   });
   const handleSwitchToBypassAndRetry = useCallback(
     async (turnId: string) => {
-      const sessionId = activeIdRef.current;
-      if (!sessionId) return;
+      const selectionIsCurrent = captureSelection();
       const switched = await setPermissionMode('bypass');
-      if (!switched || activeIdRef.current !== sessionId) return;
+      if (!switched || !selectionIsCurrent()) return;
       await handleTurnFooterAction(turnId, 'regenerate');
     },
-    [handleTurnFooterAction, setPermissionMode],
+    [captureSelection, handleTurnFooterAction, setPermissionMode],
   );
 
   const {
@@ -1516,11 +1516,11 @@ function AppShellContent({
   } = useStableActions(createAppShellRevisionActions, {
     uiLocale,
     activeIdRef,
+    captureSelection,
     composerRef,
     messages,
     hasPendingAttachments: () => hasPendingContext,
     openSessionInChat,
-    refreshMessages,
     refreshSessions,
     setMessages,
     commitRevisionDraft,
@@ -1946,11 +1946,8 @@ function AppShellContent({
     refreshShellSettings,
     refreshSessions,
     rendererMountedRef,
-    retireSession: (sessionId) => {
-      setActiveId(undefined);
-      setMessages([]);
-      clearSessionRendererState(sessionId);
-    },
+    retireSession: clearSessionRendererState,
+    retiredSessionIds,
     setSessionEventHealthBySession: sessionUiController.setSessionEventHealthBySession,
     toastApi,
   });
@@ -1983,13 +1980,13 @@ function AppShellContent({
   const observationAuthorityRef = useRef(liveContent.EMPTY_SESSION_OBSERVATION_AUTHORITY);
   observationAuthorityRef.current = liveContent.advanceSessionObservationAuthority(
     observationAuthorityRef.current,
-    activeId,
-    activeSession?.profileId,
+    requestedSessionId,
+    requestedCatalogSession?.profileId,
   );
   useActiveSessionEvents({
     publishTranscript,
     uiLocale,
-    activeId: activeHostSession?.id,
+    activeId: requestedHostSession?.id,
     observationAuthorityRevision: observationAuthorityRef.current.revision,
     activeIdRef,
     handleEvent,
@@ -1997,7 +1994,9 @@ function AppShellContent({
     setExecution: sessionUiController.setExecution,
     completeObservationSeed,
     setMessageLoadErrorBySession: sessionUiController.setMessageLoadErrorBySession,
+    clearMessageLoadError: sessionUiController.clearMessageLoadError,
     setMessageLoadPending,
+    commitTranscript,
     transcriptRangeRef,
     setSessionEventHealthBySession: sessionUiController.setSessionEventHealthBySession,
     toastApi,
@@ -2042,7 +2041,7 @@ function AppShellContent({
    */
   function isShellSurfaceOwnerActive(owner: ComposerImportOwner): boolean {
     return navSelectionRef.current.section === owner.navSection &&
-      activeIdRef.current === owner.sessionId &&
+      isSessionSelected(owner.sessionId) &&
       (owner.sessionId !== undefined || owner.newTaskDraftKey === currentNewTaskDraftKey);
   }
 
@@ -2429,7 +2428,9 @@ function AppShellContent({
               navigation entry point. */}
           <MakaUriContext.Provider value={dispatchMakaUri}>
           <div className="maka-detail-with-artifacts">
-            <div className="mainColumn" data-home-surface={homeSurfaceActive ? 'true' : undefined}>
+            <div className="mainColumn" data-home-surface={homeSurfaceActive ? 'true' : undefined}
+              inert={switchingSession || undefined}
+              aria-busy={switchingSession || undefined}>
               <ModuleHub.ModuleHubHost />
               <WorkHubMainNavigation onOpenWorkHub={openWorkHub} onOpenSession={(sessionId) => { closeSettings(); openSession(sessionId); }} />
               <WorkHubDock enabled={workHubEnabled} visible={workHubActive && sessionsSelected && !shellObscured} />

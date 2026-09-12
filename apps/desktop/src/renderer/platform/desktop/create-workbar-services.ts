@@ -18,6 +18,9 @@
  */
 
 import type { MakaBridge } from '../../../preload/bridge-contract.js';
+import type { ShellRunUpdate } from '@maka/core/events';
+import { isTerminalShellRunStatus } from '@maka/core/shell-run';
+import { DESKTOP_TERMINAL_LAUNCH_PREFIX } from '../../../shared/runtime-host-identity.js';
 import type { WorkbarServices } from '../../features/workbar';
 import { readSettledMessagesFrom } from './session-message-settlement.js';
 
@@ -41,6 +44,13 @@ export interface DesktopWorkbarServiceDependencies {
 const DEFAULT_DEPENDENCIES: DesktopWorkbarServiceDependencies = {
   readSettledMessages: readSettledMessagesFrom,
 };
+
+function isDesktopTerminal(update: ShellRunUpdate): boolean {
+  return update.ownership.kind === 'local' &&
+    update.sourceTurnId.startsWith(DESKTOP_TERMINAL_LAUNCH_PREFIX) &&
+    update.sourceTurnId === update.sourceToolCallId &&
+    update.result.mode === 'pty';
+}
 
 /** The only Desktop-to-Workbar adapter. It narrows the preload bridge by tool. */
 export function createDesktopWorkbarServices(
@@ -79,7 +89,25 @@ export function createDesktopWorkbarServices(
       subscribeSessionEvents: (sessionId, handler) =>
         bridge.sessions.subscribeEvents(sessionId, handler),
     },
-    terminal: bridge.shellRuns,
+    terminal: {
+      start: (sessionId) => bridge.shellRuns.start(sessionId),
+      stop: (input) => bridge.shellRuns.stop(input),
+      attach: (input) => bridge.shellRuns.attach(input),
+      detach: (input) => bridge.shellRuns.detach(input),
+      write: (input) => bridge.shellRuns.write(input),
+      subscribePtyData: (handler) => bridge.shellRuns.subscribePtyData(handler),
+      subscribeResync: (handler) => bridge.shellRuns.subscribeResync(handler),
+      recover: async (sessionId) => {
+        const recovery = await bridge.shellRuns.recover(sessionId);
+        return { ...recovery, resources: recovery.resources.filter((update) =>
+          isDesktopTerminal(update) && !isTerminalShellRunStatus(update.result.status)),
+        };
+      },
+      subscribeCloseChanges: (handler) => bridge.shellRuns.subscribeCloseChanges(handler),
+      subscribeUpdates: (handler) => bridge.shellRuns.subscribeUpdates((update) => {
+        if (isDesktopTerminal(update)) handler(update);
+      }),
+    },
     browser: {
       setActiveSession: (sessionId) => bridge.browser.setActiveSession(sessionId),
       setViewport: (input) => bridge.browser.setViewport(input),
@@ -91,7 +119,6 @@ export function createDesktopWorkbarServices(
       close: (sessionId) => bridge.browser.close(sessionId),
       getState: (sessionId) => bridge.browser.getState(sessionId),
       subscribeState: (handler) => bridge.browser.onState(handler),
-      subscribeLive: (handler) => bridge.browser.onLive(handler),
     },
     artifacts: {
       list: (sessionId) => bridge.artifacts.list(sessionId),
